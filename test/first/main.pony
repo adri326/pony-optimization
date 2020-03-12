@@ -19,7 +19,6 @@ actor Main
       recover val [as F64: 0; 0; 0; 0; 0; 0; 0] end,
       {(arr: Array[F64] val): F64 =>
         try
-          @usleep[None](U64(10))
           ((arr(0)? - a).pow(2) + (arr(1)? - b).pow(2) + (arr(2)? - c).pow(2) + (arr(3)? - d).pow(2) + (arr(4)? - e).pow(2) + (arr(5)? - f).pow(2) + (arr(6)? - g).pow(2)).sqrt()
         else out.print("Couldn't read element off cost input array"); 0 end
       },
