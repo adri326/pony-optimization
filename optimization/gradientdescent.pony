@@ -3,13 +3,13 @@ use "promises"
 use "collections"
 
 actor GradientDescent is Minimizer
-  let guess: Array[F64] ref
+  var guess: Array[F64] val
   let cost_fn: CostFn
   let epsilon: F64
   let gamma: F64
   let dimensions: USize
   let target: USize
-  let workers: Array[_Worker]
+  let workers: Array[_GDWorker]
   var received: USize = 0
   var prom: (Promise[Array[F64] val] | None) = None
   let costs: Array[F64] ref
@@ -18,57 +18,48 @@ actor GradientDescent is Minimizer
   var steps_done: USize = 0
 
   new create(initial: Array[F64] val, cost_fn': CostFn, target': USize, epsilon': F64 = 1e-3, gamma': F64 = 5e-4) =>
-    guess = initial.clone()
+    guess = initial
     cost_fn = cost_fn'
     epsilon = epsilon'
     gamma = gamma'
     target = target'
     dimensions = guess.size()
-    workers = Array[_Worker]((dimensions * 2) + 1)
+    workers = Array[_GDWorker](dimensions + 1)
     derivatives = Array[F64](dimensions)
-    costs = Array[F64](workers.size())
-    for i in Range[USize](0, (dimensions * 2) + 1) do
-      workers.push(_Worker(this, cost_fn, i))
-      costs.push(0)
-      derivatives.push(0)
+    costs = Array[F64]((dimensions * 2) + 1)
+
+    for i in Range[USize](0, dimensions + 1) do
+      workers.push(_GDWorker(this, cost_fn, if i == 0 then 0 else i - 1 end))
     end
 
-  fun shift(index: USize, by: I32): Array[F64] iso^ =>
-    let arr: Array[F64] iso = recover iso Array[F64](dimensions) end
-    for (index', value) in guess.pairs() do
-      arr.push(
-        if index' == index then
-          value + (epsilon * by.f64())
-        else
-          value
-        end
-      )
+    for j in Range[USize](0, (dimensions * 2) + 1) do
+      costs.push(0)
     end
-    consume arr
+
+    for k in Range[USize](0, dimensions) do
+      derivatives.push(0)
+    end
 
   be _receive_cost(cost: F64, index: USize) =>
     try
       costs(index)? = cost
     else
-      Debug("Couldn't write to cost array")
+      Debug("Couldn't write to cost array: " + index.string() + " > " + costs.size().string())
       _reject()
       return
     end
     received = received + 1
-    if received == workers.size() then
+    if received == costs.size() then
       step()
     end
 
   fun distribute() =>
     for (index, worker) in workers.pairs() do
-      let arr = if index == 0 then shift(0, 0)
-        else
-          shift(
-            (index - 1) / 2,
-            if (index % 2) == 0 then -1 else 1 end
-          )
-        end
-      worker(consume arr)
+      if index == 0 then
+        worker(guess, None)
+      else
+        worker(guess, (index - 1, gamma))
+      end
     end
 
   be minimize(prom': Promise[Array[F64] val]) =>
@@ -90,7 +81,7 @@ actor GradientDescent is Minimizer
     steps_done = steps_done + 1
     if steps_done >= target then
       match prom
-      | (let p: Promise[Array[F64] val]) => p(shift(0, 0))
+      | (let p: Promise[Array[F64] val]) => p(guess)
       end
       return
     end
@@ -111,15 +102,17 @@ actor GradientDescent is Minimizer
 
     let mult_ratio = gamma / sum.sqrt()
 
+    let res: Array[F64] trn = recover trn Array[F64](guess.size()) end
     for (index', value') in guess.pairs() do
       try
-        guess(index')? = value' + (derivatives(index')? * mult_ratio)
+        res.push(value' + (derivatives(index')? * mult_ratio))
       else
-        Debug("Couldn't write to guess array")
+        Debug("Couldn't read derivative array")
         _reject()
         return
       end
     end
+    guess = consume res
 
     received = 0
     distribute()
@@ -129,7 +122,7 @@ actor GradientDescent is Minimizer
     | (let p: Promise[Array[F64] val]) => p.reject()
     end
 
-actor _Worker
+actor _GDWorker
   let cost_fn: CostFn
   let index: USize
   let parent: Minimizer tag
@@ -139,7 +132,23 @@ actor _Worker
     cost_fn = cost_fn'
     index = index'
 
-  be apply(input: Array[F64] iso) =>
-    let res = cost_fn(consume input)
-    // Debug(index.string() + " - " + res.string())
-    parent._receive_cost(res, index)
+  be apply(guess: Array[F64] val, shift: ((USize, F64) | None)) =>
+    match shift
+    | None =>
+      parent._receive_cost(cost_fn(guess), index)
+    | (let index': USize, let by: F64) =>
+      parent._receive_cost(cost_fn(recover val
+        let res = Array[F64](guess.size())
+        for (i, value) in guess.pairs() do
+          res.push(if \unlikely\ i == index' then value + by else value end)
+        end
+        res
+      end), (index * 2) + 1)
+      parent._receive_cost(cost_fn(recover val
+        let res = Array[F64](guess.size())
+        for (i, value) in guess.pairs() do
+          res.push(if \unlikely\ i == index' then value - by else value end)
+        end
+        res
+      end), (index * 2) + 2)
+    end
