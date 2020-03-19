@@ -63,7 +63,7 @@ actor GradientDescent is Minimizer
     end
 
   be minimize(prom': Promise[Array[F64] val]) =>
-    if is_calculating then prom'.reject() end
+    if is_calculating then prom'.reject(); return end
     prom = prom'
     received = 0
     distribute()
@@ -125,9 +125,9 @@ actor GradientDescent is Minimizer
 actor _GDWorker
   let cost_fn: CostFn
   let index: USize
-  let parent: Minimizer tag
+  let parent: GradientDescent tag
 
-  new create(parent': Minimizer tag, cost_fn': CostFn, index': USize) =>
+  new create(parent': GradientDescent tag, cost_fn': CostFn, index': USize) =>
     parent = parent'
     cost_fn = cost_fn'
     index = index'

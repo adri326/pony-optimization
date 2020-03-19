@@ -5,6 +5,7 @@ actor Main
   let out: OutStream
 
   new create(env: Env) =>
+    let method = U8(1)
     out = env.out
     let promise = Promise[Array[F64] val]
     let a: F64 = 10
@@ -14,15 +15,29 @@ actor Main
     let e: F64 = 6
     let f: F64 = -23
     let g: F64 = 1
-    promise.next[None](_Fulfill(out))
-    GradientDescent(
-      recover val [as F64: 0; 0; 0; 0; 0; 0; 0] end,
-      {(arr: Array[F64] val): F64 =>
+    let fn: CostFn val = {(arr: Array[F64] val): F64 =>
         try
           ((arr(0)? - a).pow(2) + (arr(1)? - b).pow(2) + (arr(2)? - c).pow(2) + (arr(3)? - d).pow(2) + (arr(4)? - e).pow(2) + (arr(5)? - f).pow(2) + (arr(6)? - g).pow(2)).sqrt()
         else out.print("Couldn't read element off cost input array"); 0 end
-      },
-      10000, 0.01, 0.002
+      }
+    promise.next[None](_Fulfill(out))
+    (
+      match method
+      | 1 => GridSearch(
+        7,
+        recover val Array[F64].init(-100, 7) end,
+        recover val Array[F64].init(100, 7) end,
+        fn,
+        10,
+        5,
+        4
+      )
+      else GradientDescent(
+        recover val [as F64: 0; 0; 0; 0; 0; 0; 0] end,
+        fn,
+        10000, 0.01, 0.002
+      )
+      end
     ).minimize(promise)
 
 class _Fulfill is Fulfill[Array[F64] val, None]
