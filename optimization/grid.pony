@@ -87,7 +87,8 @@ actor GridSearch is Minimizer
         _steps,
         _delta,
         pos,
-        this
+        this,
+        _workers.size()
       ))
     else
       for i in Range[USize](0, _delta) do
@@ -131,6 +132,7 @@ actor _GridWorker
   let _parent: GridSearch
   let _cell_dim: USize
   let _n_workers: USize
+  let _id: USize
 
   var friend: (_GridWorker | None) = None
   var my_minimum: (Array[F64] val, F64) = (recover val Array[F64](0) end, F64.max_value())
@@ -139,6 +141,7 @@ actor _GridWorker
   var points_done: USize = 0
   var should_forward: Bool = false
   var completed_steps: USize = 0
+  var has_sent_own_score: Bool = false
 
   new create(
     from: Array[F64] val,
@@ -147,7 +150,8 @@ actor _GridWorker
     steps: USize,
     delta: USize,
     position: Array[USize] val, // starting position of the worker
-    parent: GridSearch
+    parent: GridSearch,
+    id: USize
   ) =>
     _from = from
     _to = to
@@ -160,12 +164,16 @@ actor _GridWorker
     _position = position
     _parent = parent
 
+    _id = id
+
   be set_friend(friend': _GridWorker) =>
     friend = friend'
     _parent.worker_ready()
 
   be step() =>
     points_done = 0
+    has_sent_own_score = false
+    should_forward = false
     rec(Array[F64](0), 0)
 
   fun ref rec(arr: Array[F64] ref, n: USize) =>
@@ -221,11 +229,12 @@ actor _GridWorker
       _end()
     end
 
-  fun _end() =>
+  fun ref _end() =>
     match friend
     | (let friend': _GridWorker) =>
       if my_minimum._2 <= known_minimum._2 then
         friend'._forward(my_minimum, completed_steps)
+        has_sent_own_score = true
       elseif should_forward then
         friend'._forward(known_minimum, completed_steps)
       end
@@ -233,11 +242,13 @@ actor _GridWorker
 
   be _forward(minimum: (Array[F64] val, F64), steps: USize) =>
     Debug("Forwarded: " + minimum._2.string() + " at step " + steps.string() + " (I'm at step " + completed_steps.string() + " and have as local minimum " + my_minimum._2.string() + ")")
-    known_minimum = minimum
+    if minimum._2 <= known_minimum._2 then
+      known_minimum = minimum
+    else return end
 
     if (points_done == _cell_dim) and (completed_steps == steps) then // we're ready to forward
       if ArraysEq(minimum._1, my_minimum._1) then // we're the initial author
-        Debug("- I'm the author!")
+        Debug("- I'm the author! (" + _id.string() + ")")
         if completed_steps >= (_steps - 1) then
           _parent._resolve(my_minimum._1)
         else
@@ -247,7 +258,7 @@ actor _GridWorker
             completed_steps = completed_steps + 1
             friend'._next_step(_from, _to, completed_steps, _n_workers - 1)
             step()
-            Debug("Initiated step " + completed_steps.string() + "!")
+            Debug("Initiated step " + completed_steps.string() + "! (" + _id.string() + ")")
           end
         end
       else
@@ -255,7 +266,9 @@ actor _GridWorker
         match friend
         | (let friend': _GridWorker) =>
           if my_minimum._2 < minimum._2 then
-            friend'._forward(my_minimum, completed_steps)
+            if not (has_sent_own_score = true) then
+              friend'._forward(my_minimum, completed_steps)
+            end
           else
             friend'._forward(known_minimum, completed_steps)
           end
